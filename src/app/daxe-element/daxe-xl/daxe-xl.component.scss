@@ -1,0 +1,14 @@
+.button-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+button {
+  flex: 1;
+  min-width: 120px;
+}
+.title {
+  text-align: center;
+  margin-bottom: 20px;
+}

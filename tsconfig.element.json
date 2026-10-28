@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./out-tsc/element",
+    "types": ["office-js"]
+  },
+  "files": ["src/main.element.ts"],
+  "include": ["src/**/*.d.ts"]
+}

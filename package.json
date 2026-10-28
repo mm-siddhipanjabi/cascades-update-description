@@ -1,0 +1,50 @@
+{
+  "name": "generated-daxe-xl",
+  "version": "1.0.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "test": "ng test",
+    "elementsBuild": "ng run generated-daxe-xl:build-element:production && npm run package",
+    "package": "node scripts/package-elements.js elements.js",
+    "packageLocal": "node scripts/package-elements.js src/assets/elements.js",
+    "elementsBuildLocal": "ng run generated-daxe-xl:build-element:production && npm run packageLocal",
+    "serve:dist": "node scripts/serve-dist.js dist/generated-daxe-xl 4300",
+    "deploy:elements": "npm run elementsBuildLocal && npm run package && npm run serve:dist"
+  },
+  "private": true,
+  "dependencies": {
+    "@angular/common": "19.2.3",
+    "@angular/compiler": "19.2.3",
+    "@angular/core": "19.2.3",
+    "@angular/elements": "19.2.3",
+    "@angular/platform-browser": "19.2.3",
+    "@angular/platform-browser-dynamic": "19.2.3",
+    "daxe-ui-sdk": "2026.08.20",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.8.1",
+    "zone.js": "~0.15.0",
+    "@microsoft/office-js": "^1.1.110",
+    "moment-timezone": "^0.6.0",
+    "ts-md5": "^2.0.1"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "19.2.3",
+    "@angular/cli": "19.2.3",
+    "@angular/compiler-cli": "19.2.3",
+    "@types/jasmine": "~5.1.0",
+    "@types/office-js": "^1.0.557",
+    "jasmine-core": "~5.6.0",
+    "karma": "~6.4.0",
+    "karma-chrome-launcher": "~3.2.0",
+    "karma-coverage": "~2.2.0",
+    "karma-jasmine": "~5.1.0",
+    "karma-jasmine-html-reporter": "~2.1.0",
+    "office-addin-debugging": "^6.0.6",
+    "typescript": "~5.7.2"
+  },
+  "overrides": {
+    "@microsoft/m365agentstoolkit-cli": "1.1.15"
+  }
+}
