@@ -361,24 +361,40 @@ export class DaxeXLService {
 
     try {
       this.sharedService.isProcessRunning = true;
-      await this.utilsService.displayStatus(this.translationService.translate('Generating descriptions...'));
       await this.sharedService.updateStatusForMissingRecordNumbers();
-      let recordList: MdoRecord[] = [];
 
       if (isFromDaxeXlUI) {
-        recordList = await this.excelReader.buildRecordList('generateDescriptions' as any) as MdoRecord[];
+        // Button-triggered flow: excelReader batches records internally for
+        // requestType 'generateDescriptions' (GENERATE_DESCRIPTION_PUSH_BATCH),
+        // so each batch's response is awaited and patched before the next one
+        // is read, instead of one oversized call for the whole sheet.
+        let processedRecords = 0;
+        await this.excelReader.processSheetRecordWise('generateDescriptions' as any, async ({ totalRecords, recordList }: { totalRecords: number; batchRecordCount: number; recordList: MdoRecord[] }) => {
+          if (!recordList?.length) {
+            return;
+          }
+          processedRecords += recordList.length;
+          await this.utilsService.displayStatus(
+            this.translationService.translate('Generating descriptions... ({{done}}/{{total}})', {
+              done: String(processedRecords),
+              total: String(totalRecords)
+            })
+          );
+          const response = await this.sharedService.generateDescriptionsForRecords(recordList);
+          await this.excelWriter.processGeneratedDescription(response);
+        });
       } else {
+        await this.utilsService.displayStatus(this.translationService.translate('Generating descriptions...'));
         if (!context) {
           throw new Error('Excel context is required when not calling from DAXE XL UI');
         }
-        recordList = await this.excelReader.buildRecordsForRowRange(aggregatedStartRow, aggregatedEndRow, 'generateDescriptions', context);
+        const recordList = await this.excelReader.buildRecordsForRowRange(aggregatedStartRow, aggregatedEndRow, 'generateDescriptions', context);
+        console.log('Prepared MDO records for aggregated set:', recordList.length, 'Rows:', aggregatedStartRow, aggregatedEndRow);
+        if (recordList.length > 0) {
+          const response = await this.sharedService.generateDescriptionsForRecords(recordList);
+          await this.excelWriter.processGeneratedDescription(response);
+        }
       }
-      console.log('Prepared MDO records for aggregated set:', recordList.length, 'Rows:', aggregatedStartRow, aggregatedEndRow);
-      if (recordList.length > 0) {
-        const response = await this.sharedService.generateDescriptionsForRecords(recordList);
-        await this.excelWriter.processGeneratedDescription(response);
-      }
-      await this.utilsService.displayStatus(null);
     } catch (error_) {
       console.error('Failed to prepare/emit MDO records for aggregated rows:', error_);
     } finally {

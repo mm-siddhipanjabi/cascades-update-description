@@ -13,6 +13,8 @@ export class ExcelReaderService {
   event: Subject<DaxeXlEventType> = daxeXlEvent;
   private readonly ROW_BATCH_SIZE = 5000;
   private readonly RECORD_PUSH_BATCH = 5000;
+  /** Smaller push batch used only when requestType is 'generateDescriptions'. */
+  private readonly GENERATE_DESCRIPTION_PUSH_BATCH = 50;
 
   constructor(private readonly sharedService: SharedService, private readonly utilsService: UtilsService, private readonly translationService: TranslationService) { }
 
@@ -681,6 +683,9 @@ export class ExcelReaderService {
     pushCallback: (batchJson: ({ totalRecords: any, batchRecordCount: any, recordList: any })) => Promise<void>,
     sheetName?: string
   ) {
+    const pushBatchSize = (requestType as any) === 'generateDescriptions'
+      ? this.GENERATE_DESCRIPTION_PUSH_BATCH
+      : this.RECORD_PUSH_BATCH;
     await Excel.run({ delayForCellEdit: true }, async (context) => {
       const sheet = sheetName
         ? context.workbook.worksheets.getItem(sheetName)
@@ -778,7 +783,7 @@ export class ExcelReaderService {
         this.deleteCompletedRecords(incompleteRecords, completed);
         this.deleteCompletedRecords(incompleteRecords, completed);
 
-        await this.pushBufferIfNeeded(totalRows, pushBuffer, pushCallback);
+        await this.pushBufferIfNeeded(totalRows, pushBuffer, pushCallback, pushBatchSize);
 
 
         startRow += rowCount;
@@ -977,16 +982,19 @@ export class ExcelReaderService {
       totalRecords: any;
       batchRecordCount: any;
       recordList: any;
-    }) => Promise<void>
+    }) => Promise<void>,
+    pushBatchSize: number = this.RECORD_PUSH_BATCH
   ) {
-    if (pushBuffer.length >= this.RECORD_PUSH_BATCH) {
-      const batchRecordCount = pushBuffer.length;
-      // splice(0) removes all items from pushBuffer and returns them as an array
-      // This is used to clear the buffer after pushing the batch
+    // A single Excel read (ROW_BATCH_SIZE) can fill the buffer with more than
+    // one pushBatchSize worth of records, so flush in a loop rather than once,
+    // otherwise a small pushBatchSize (e.g. 100) would still go out as one
+    // oversized batch whenever a bigger read chunk fills it in one pass.
+    while (pushBuffer.length >= pushBatchSize) {
+      const batch = pushBuffer.splice(0, pushBatchSize);
       await pushCallback({
         totalRecords: totalRows - 3,
-        batchRecordCount,
-        recordList: pushBuffer.splice(0),
+        batchRecordCount: batch.length,
+        recordList: batch,
       });
     }
   }
