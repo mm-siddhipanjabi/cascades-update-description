@@ -364,25 +364,32 @@ export class DaxeXLService {
       await this.sharedService.updateStatusForMissingRecordNumbers();
 
       if (isFromDaxeXlUI) {
-        // Button-triggered flow: excelReader batches records internally for
-        // requestType 'generateDescriptions' (GENERATE_DESCRIPTION_PUSH_BATCH),
-        // so each batch's response is awaited and patched before the next one
-        // is read, instead of one oversized call for the whole sheet.
-        let processedRecords = 0;
+        // Collect batches inside Excel.run, then call the API and write after
+        // that run ends. Nested Excel.run + protect/unprotect was dropping rows.
+        const batches: { totalRecords: number; recordList: MdoRecord[] }[] = [];
         await this.excelReader.processSheetRecordWise('generateDescriptions' as any, async ({ totalRecords, recordList }: { totalRecords: number; batchRecordCount: number; recordList: MdoRecord[] }) => {
-          if (!recordList?.length) {
-            return;
+          if (recordList?.length) {
+            batches.push({ totalRecords, recordList: [...recordList] });
           }
-          processedRecords += recordList.length;
-          await this.utilsService.displayStatus(
-            this.translationService.translate('Generating descriptions... ({{done}}/{{total}})', {
-              done: String(processedRecords),
-              total: String(totalRecords)
-            })
-          );
-          const response = await this.sharedService.generateDescriptionsForRecords(recordList);
-          await this.excelWriter.processGeneratedDescription(response);
         });
+
+        let processedRecords = 0;
+        await this.utilsService.toggleEvents(false);
+        try {
+          for (const { totalRecords, recordList } of batches) {
+            processedRecords += recordList.length;
+            await this.utilsService.displayStatus(
+              this.translationService.translate('Generating descriptions...)', {
+                done: String(processedRecords),
+                total: String(totalRecords)
+              })
+            );
+            const response = await this.sharedService.generateDescriptionsForRecords(recordList);
+            await this.excelWriter.processGeneratedDescription(response, false);
+          }
+        } finally {
+          await this.utilsService.toggleEvents(true);
+        }
       } else {
         await this.utilsService.displayStatus(this.translationService.translate('Generating descriptions...'));
         if (!context) {

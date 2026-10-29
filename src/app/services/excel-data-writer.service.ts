@@ -2673,7 +2673,7 @@ export class ExcelDataWriterService {
     }
   }
 
-  async processGeneratedDescription(event: any) {
+  async processGeneratedDescription(event: any, manageEvents: boolean = true) {
     if (!this.sharedService.classificationEnabled) {
       return;
     }
@@ -2681,13 +2681,17 @@ export class ExcelDataWriterService {
     if (event) {
       this.recordFirstRow = new Map<string, number>();
       console.log("Generate Description Response received:", event.data);
-      await this.utilsService.toggleEvents(false);
+      if (manageEvents) {
+        await this.utilsService.toggleEvents(false);
+      }
       // Always restore workbook events. A failed description update must not
       // leave the generated element unable to process later sheet changes.
       try {
         await this.updateDescription(event.data, true);
       } finally {
-        await this.utilsService.toggleEvents(true);
+        if (manageEvents) {
+          await this.utilsService.toggleEvents(true);
+        }
       }
     }
     else {
