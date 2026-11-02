@@ -7,11 +7,10 @@
     "build": "ng build",
     "test": "ng test",
     "elementsBuild": "ng run generated-daxe-xl:build-element:production && npm run package",
-    "package": "node scripts/package-elements.js elements.js",
-    "packageLocal": "node scripts/package-elements.js src/assets/elements.js",
+    "package": "cat dist/generated-daxe-xl/runtime.js dist/generated-daxe-xl/polyfills.js dist/generated-daxe-xl/main.js > elements.js",
+    "packageLocal": "node -e \"require('fs').mkdirSync('src/assets',{recursive:true})\" && cat dist/generated-daxe-xl/runtime.js dist/generated-daxe-xl/polyfills.js dist/generated-daxe-xl/main.js > src/assets/elements.js",
     "elementsBuildLocal": "ng run generated-daxe-xl:build-element:production && npm run packageLocal",
-    "serve:dist": "node scripts/serve-dist.js dist/generated-daxe-xl 4300",
-    "deploy:elements": "npm run elementsBuildLocal && npm run package && npm run serve:dist"
+    "deploy:elements": "npm run elementsBuildLocal && npm run package && ng serve --port 62518"
   },
   "private": true,
   "dependencies": {

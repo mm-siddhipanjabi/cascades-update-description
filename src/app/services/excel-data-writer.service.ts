@@ -1726,6 +1726,11 @@ export class ExcelDataWriterService {
         });
       }
 
+      if (descriptionOnly) {
+        await this.writeGeneratedDescriptionCells(recordList, shortMeta, longMeta, true);
+        return;
+      }
+
       await Excel.run({ delayForCellEdit: true }, async (ctx: Excel.RequestContext) => {
         try {
           const sheet = ctx.workbook.worksheets.getActiveWorksheet();
@@ -1760,11 +1765,8 @@ export class ExcelDataWriterService {
             let shortDesc = '';
             let longDesc = '';
             if (descriptions.length) {
-              // console.log('updateDescription: processing descriptions for record with ROW_UUID:', excelRowNumber);
-              // Aggregate across all classification descriptions; pick preferred language blocks.
               for (const descBlock of descriptions) {
                 const attrsByLang = descBlock?.attributes || {};
-                // Preferred language order
                 const langs = Object.keys(attrsByLang);
                 let chosenLang = langs.find(l => l.toLowerCase() === this.sharedService.globalConfig?.UserProfile?.selfServiceUserModel?.lang) || langs[0];
                 if (chosenLang) {
@@ -1772,12 +1774,11 @@ export class ExcelDataWriterService {
                   const sd = (attrObj?.shortDesc || '').toString().trim();
                   const ld = (attrObj?.longDesc || '').toString().trim();
                   if (sd) {
-                    shortDesc = shortDesc ? `${shortDesc} | ${sd}` : sd; // concatenate if multiple
+                    shortDesc = shortDesc ? `${shortDesc} | ${sd}` : sd;
                   }
                   if (ld) {
                     longDesc = longDesc ? `${longDesc} | ${ld}` : ld;
                   }
-                  if (descriptionOnly) continue;
                 }
               }
             }
@@ -1805,12 +1806,11 @@ export class ExcelDataWriterService {
               console.log(err);
             }
 
-            // Write values if metadata found
             try {
               if (shortMeta && shortDesc) {
                 const cell = sheet.getCell(rowIndex, shortMeta.columnNumber);
                 cell.numberFormat = [['@']];
-                cell.values = [[shortDesc.replaceAll(`\\n`, '\n')]]; // handle escaped newlines
+                cell.values = [[shortDesc.replaceAll(`\\n`, '\n')]];
                 cell.format.fill.color = '#d3d3d3';
                 cell.format.protection.locked = true;
                 console.log('updateDescription: wrote short description for row', excelRowNumber);
@@ -1818,7 +1818,7 @@ export class ExcelDataWriterService {
               if (longMeta && longDesc) {
                 const cell = sheet.getCell(rowIndex, longMeta.columnNumber);
                 cell.numberFormat = [['@']];
-                cell.values = [[longDesc.replaceAll(`\\n`, '\n')]]; // handle escaped newlines
+                cell.values = [[longDesc.replaceAll(`\\n`, '\n')]];
                 cell.format.fill.color = '#d3d3d3';
                 cell.format.protection.locked = true;
                 console.log('updateDescription: wrote long description for row', excelRowNumber);
@@ -2678,7 +2678,7 @@ export class ExcelDataWriterService {
       return;
     }
 
-    if (event) {
+    if (event?.data) {
       this.recordFirstRow = new Map<string, number>();
       console.log("Generate Description Response received:", event.data);
       if (manageEvents) {
@@ -2696,6 +2696,154 @@ export class ExcelDataWriterService {
     }
     else {
       console.log("description timeout event not received")
+    }
+  }
+
+  private async writeGeneratedDescriptionCells(
+    recordList: MdoRecordES[],
+    shortMeta: any,
+    longMeta: any,
+    descriptionOnly: boolean
+  ): Promise<void> {
+    const pending: Array<{ rowIndex: number; shortDesc: string; longDesc: string; errorMessages: string }> = [];
+    for (const record of recordList) {
+      const hdvs = record?.hdvs || {};
+      let rowUUIDValue: number | undefined | string = hdvs['ROW_UUID']?.vc?.[0]?.c ?? 2;
+      if (this.recordFirstRow.size > 0) {
+        rowUUIDValue = this.recordFirstRow.get(record.id.toString());
+      }
+      const excelRowNumber = Number(rowUUIDValue);
+      if (!Number.isFinite(excelRowNumber)) {
+        continue;
+      }
+      const rowIndex = this.recordFirstRow.size > 0 ? excelRowNumber : excelRowNumber + 1;
+      if (rowIndex < 2) {
+        continue;
+      }
+
+      let descriptions = record?.descriptions || [];
+      try {
+        descriptions = this.normalizeLongDescription(descriptions, record.id as string);
+      } catch (err) {
+        console.log(err);
+      }
+      let shortDesc = '';
+      let longDesc = '';
+      if (descriptions.length) {
+        for (const descBlock of descriptions) {
+          const attrsByLang = descBlock?.attributes || {};
+          const langs = Object.keys(attrsByLang);
+          const chosenLang = langs.find(l => l.toLowerCase() === this.sharedService.globalConfig?.UserProfile?.selfServiceUserModel?.lang) || langs[0];
+          if (chosenLang) {
+            const attrObj: any = attrsByLang[chosenLang];
+            const sd = (attrObj?.shortDesc || '').toString().trim();
+            const ld = (attrObj?.longDesc || '').toString().trim();
+            if (sd) {
+              shortDesc = shortDesc ? `${shortDesc} | ${sd}` : sd;
+            }
+            if (ld) {
+              longDesc = longDesc ? `${longDesc} | ${ld}` : ld;
+            }
+            if (descriptionOnly) continue;
+          }
+        }
+      }
+      let errorMessages = '';
+      try {
+        if ((record as any).errorLogs) {
+          const errorLogs: Array<{ fieldId: string; errMsg: any; errorMsg: string }> = (record as any).errorLogs;
+          for (const error of errorLogs) {
+            errorMessages += `${error.fieldId}:- ${error.errorMsg || ''}, ${error.errMsg || ''} \n`;
+          }
+        }
+      } catch (err) {
+        console.log(err);
+      }
+      pending.push({ rowIndex, shortDesc, longDesc, errorMessages });
+    }
+
+    try {
+      await this.writeDescriptionCells(pending, shortMeta, longMeta);
+    } catch (error) {
+      console.warn('updateDescription: bulk write failed, writing in chunks', error);
+      const syncEvery = 200;
+      for (let i = 0; i < pending.length; i += syncEvery) {
+        const chunk = pending.slice(i, i + syncEvery);
+        try {
+          await this.writeDescriptionCells(chunk, shortMeta, longMeta);
+        } catch (chunkError) {
+          console.warn('updateDescription: chunk write failed', chunkError);
+        }
+      }
+    }
+  }
+
+  private async writeDescriptionCells(
+    items: Array<{ rowIndex: number; shortDesc: string; longDesc: string; errorMessages: string }>,
+    shortMeta: any,
+    longMeta: any
+  ): Promise<void> {
+    if (!items.length) {
+      return;
+    }
+    await Excel.run({ delayForCellEdit: true }, async (ctx: Excel.RequestContext) => {
+      const sheet = ctx.workbook.worksheets.getActiveWorksheet();
+      if (shortMeta) {
+        this.writeDescriptionColumnRange(
+          sheet,
+          items
+            .filter(item => item.shortDesc)
+            .map(item => ({ rowIndex: item.rowIndex, value: item.shortDesc.replaceAll(`\\n`, '\n') })),
+          shortMeta.columnNumber
+        );
+      }
+      if (longMeta) {
+        this.writeDescriptionColumnRange(
+          sheet,
+          items
+            .filter(item => item.longDesc)
+            .map(item => ({ rowIndex: item.rowIndex, value: item.longDesc.replaceAll(`\\n`, '\n') })),
+          longMeta.columnNumber
+        );
+      }
+      for (const item of items) {
+        if (!item.errorMessages) {
+          continue;
+        }
+        const cell = sheet.getCell(item.rowIndex, 0);
+        cell.numberFormat = [['@']];
+        cell.values = [['ERROR']];
+        const mCell = sheet.getCell(item.rowIndex, 1);
+        mCell.numberFormat = [['@']];
+        mCell.values = [[item.errorMessages]];
+      }
+      await ctx.sync();
+    });
+  }
+
+  private writeDescriptionColumnRange(
+    sheet: Excel.Worksheet,
+    items: Array<{ rowIndex: number; value: string }>,
+    columnNumber: number
+  ) {
+    if (!items.length || columnNumber === undefined || columnNumber === null) {
+      return;
+    }
+    const sorted = [...items].sort((a, b) => a.rowIndex - b.rowIndex);
+    let start = 0;
+    while (start < sorted.length) {
+      let end = start;
+      while (end + 1 < sorted.length && sorted[end + 1].rowIndex === sorted[end].rowIndex + 1) {
+        end++;
+      }
+      const run = sorted.slice(start, end + 1);
+      const values = run.map(item => [item.value]);
+      const range = sheet.getRangeByIndexes(run[0].rowIndex, columnNumber, run.length, 1);
+      range.numberFormat = run.map(() => ['@']);
+      range.values = values;
+      range.format.fill.color = '#d3d3d3';
+      range.format.protection.locked = true;
+      start = end + 1;
     }
   }
 

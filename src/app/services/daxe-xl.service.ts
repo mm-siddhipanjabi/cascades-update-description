@@ -361,11 +361,11 @@ export class DaxeXLService {
 
     try {
       this.sharedService.isProcessRunning = true;
+      await this.utilsService.displayStatus(this.translationService.translate('Generating descriptions...'));
       await this.sharedService.updateStatusForMissingRecordNumbers();
 
       if (isFromDaxeXlUI) {
-        // Collect batches inside Excel.run, then call the API and write after
-        // that run ends. Nested Excel.run + protect/unprotect was dropping rows.
+        // Collect batches inside Excel.run, then API+write after it ends.
         const batches: { totalRecords: number; recordList: MdoRecord[] }[] = [];
         await this.excelReader.processSheetRecordWise('generateDescriptions' as any, async ({ totalRecords, recordList }: { totalRecords: number; batchRecordCount: number; recordList: MdoRecord[] }) => {
           if (recordList?.length) {
@@ -379,7 +379,7 @@ export class DaxeXLService {
           for (const { totalRecords, recordList } of batches) {
             processedRecords += recordList.length;
             await this.utilsService.displayStatus(
-              this.translationService.translate('Generating descriptions...)', {
+              this.translationService.translate('Generating descriptions...', {
                 done: String(processedRecords),
                 total: String(totalRecords)
               })

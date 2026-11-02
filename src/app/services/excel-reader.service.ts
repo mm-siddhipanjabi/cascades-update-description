@@ -13,8 +13,7 @@ export class ExcelReaderService {
   event: Subject<DaxeXlEventType> = daxeXlEvent;
   private readonly ROW_BATCH_SIZE = 5000;
   private readonly RECORD_PUSH_BATCH = 5000;
-  /** Smaller push batch used only when requestType is 'generateDescriptions'. */
-  private readonly GENERATE_DESCRIPTION_PUSH_BATCH = 50;
+  private readonly GENERATE_DESCRIPTION_PUSH_BATCH = 1000;
 
   constructor(private readonly sharedService: SharedService, private readonly utilsService: UtilsService, private readonly translationService: TranslationService) { }
 
@@ -683,7 +682,8 @@ export class ExcelReaderService {
     pushCallback: (batchJson: ({ totalRecords: any, batchRecordCount: any, recordList: any })) => Promise<void>,
     sheetName?: string
   ) {
-    const pushBatchSize = (requestType as any) === 'generateDescriptions'
+    const isGenerateDescription = (requestType as any) === 'generateDescriptions';
+    const pushBatchSize = isGenerateDescription
       ? this.GENERATE_DESCRIPTION_PUSH_BATCH
       : this.RECORD_PUSH_BATCH;
     await Excel.run({ delayForCellEdit: true }, async (context) => {
@@ -742,7 +742,10 @@ export class ExcelReaderService {
           ? await this.processClassAndAttributes(rowCount, context, undefined, false, sheet)
           : new Map<string, ClassificationDescription>();
         console.log("CLASS MAPPING::", classDetails.values());
-        const endRow = startRow + rowCount - 1;
+        // Validate/submit keep the original window end. Generate Description
+        // must include the last Excel row of a 5000-row window (row 5002).
+        const endRow = isGenerateDescription ? startRow + rowCount : startRow + rowCount - 1;
+        const rowOffset = startRow - 2;
 
         let result: any = [];
         for (const item of classDetails.values()) {
@@ -769,7 +772,17 @@ export class ExcelReaderService {
         await context.sync();
         const values = block.text;
 
-        this.groupRowsByRecordNumber(values, recordNumbers, incompleteRecords);
+        if (isGenerateDescription) {
+          this.groupRowsByRecordNumber(
+            values,
+            recordNumbers.slice(rowOffset, rowOffset + values.length),
+            incompleteRecords,
+            undefined,
+            rowOffset
+          );
+        } else {
+          this.groupRowsByRecordNumber(values, recordNumbers, incompleteRecords);
+        }
 
         const completed = await this.processCompletedRecords(
           incompleteRecords,
@@ -936,7 +949,7 @@ export class ExcelReaderService {
     const completed: string[] = [];
     for (const [recNo, recData] of incompleteRecords) {
       const lastIdx = recordLastIndexMap.get(recNo);
-      if (lastIdx && lastIdx <= endRow) {
+      if (lastIdx != null && lastIdx <= endRow) {
         if (useIndividualRecords) {
           const individualRecords = await this.buildIndividualRecordsFromRows(
             recNo,
@@ -1044,7 +1057,8 @@ export class ExcelReaderService {
     values: string[][],
     recordNumbers: string[],
     incompleteRecords: Map<string, { rows: string[][]; rowIndexes: number[] }>,
-    recordBoundMap?: Map<string, { first: number; last: number }>
+    recordBoundMap?: Map<string, { first: number; last: number }>,
+    rowIndexOffset: number = 0
   ) {
 
     // 1️⃣ Find records that must be skipped
@@ -1069,9 +1083,10 @@ export class ExcelReaderService {
         rows: [],
         rowIndexes: [],
       };
-      let excelRow = recordBoundMap ? (recordBoundMap.get(recNo)?.first || 1) - 3 : idx;
+      const sheetRowIndex = idx + rowIndexOffset;
+      let excelRow = recordBoundMap ? (recordBoundMap.get(recNo)?.first || 1) - 3 : sheetRowIndex;
       if (recData.rows.length > 0) {
-        excelRow = recordBoundMap ? excelRow + recData.rows.length : idx;
+        excelRow = recordBoundMap ? excelRow + recData.rows.length : sheetRowIndex;
       }
       recData.rows.push(row);
 
@@ -1159,7 +1174,8 @@ export class ExcelReaderService {
     context: Excel.RequestContext,
     selectedRow?: number,
     isGenerateDescription: boolean = false,
-    worksheet?: Excel.Worksheet
+    worksheet?: Excel.Worksheet,
+    endRowExclusive?: number
   ): Promise<Map<string, ClassificationDescription>> {
     if (!this.sharedService.classificationEnabled) {
       return new Map<string, ClassificationDescription>();
@@ -1193,9 +1209,10 @@ export class ExcelReaderService {
     if (selectedRow) {
       startRow = selectedRow;
     }
+    const lastRow = Math.min(endRowExclusive ?? totalRows, totalRows);
 
-    while (startRow < totalRows) {
-      const rowCount = Math.min(batchSize, totalRows - startRow);
+    while (startRow < lastRow) {
+      const rowCount = Math.min(batchSize, lastRow - startRow, totalRows - startRow);
       const block = sheet.getRangeByIndexes(startRow, 0, rowCount, totalCols);
 
       block.load("values");
@@ -1224,6 +1241,9 @@ export class ExcelReaderService {
 
 
         if (this.isRowEmpty(row) || row.length <= classColumnIndex || !classDet || !recordNumber) {
+          if (classCode && recordNumber && !classDet) {
+            console.warn('[Generate Description] class not resolved', recordNumber, classCode);
+          }
           continue;
         }
         const languages: string[] = this.sharedService.allLanguages || ['en'];

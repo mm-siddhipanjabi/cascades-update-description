@@ -686,11 +686,22 @@ export class SharedService {
       Array.isArray(item.descriptions) &&
       item.descriptions.some(desc => desc)
     );
+    if (descriptionData.length !== recordList.length) {
+      const omitted = recordList.filter(record => {
+        const descriptions = record?.mdoRecordES?.descriptions;
+        return !Array.isArray(descriptions) || !descriptions.some(desc => desc);
+      }).map(record => record.controlData?.arbitraryRecordNo || record.controlData?.recordNumber || record.mdoRecordES?.id);
+      console.warn(
+        `[Generate Description] payload ${descriptionData.length}/${recordList.length}. Omitted (no resolved class):`,
+        omitted
+      );
+    }
+    const waitMs = Math.min(600000, Math.max(20000, descriptionData.length * 1000));
     let response: any = {};
     await new Promise<void>((resolve) => {
       daxeXlEvent.pipe(
         filter(evt => evt.type === DaxeXLBaseEvents.XFUSEGenerateDescriptionResponse),
-        timeout(20000),
+        timeout(waitMs),
         take(1),
         catchError(err => {
           console.error('Generate description response error:', err);
@@ -725,7 +736,28 @@ export class SharedService {
 
     });
 
+    this.restoreGenerateDescriptionRowUuids(recordList, response);
     return (response as any) as ClassificationDescription[] || [];
+  }
+
+  private restoreGenerateDescriptionRowUuids(recordList: MdoRecord[], response: any): void {
+    const data = response?.data;
+    if (!Array.isArray(data)) {
+      return;
+    }
+    const rowUuidById = new Map(
+      recordList.map(record => [String(record?.mdoRecordES?.id ?? ''), record?.mdoRecordES?.hdvs?.['ROW_UUID']])
+    );
+    for (const rec of data) {
+      if (!rec || rec.hdvs?.['ROW_UUID']) {
+        continue;
+      }
+      const fallback = rowUuidById.get(String(rec.id ?? ''));
+      if (fallback) {
+        rec.hdvs = rec.hdvs || {};
+        rec.hdvs['ROW_UUID'] = fallback;
+      }
+    }
   }
 
   collectAllUniqueClassCodes(mdoRecord: MdoRecord[]) {
